@@ -1,18 +1,21 @@
 const { Router } = require("express");
 const router = Router();
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 const Joi = require("joi");
+const gravatar = require("gravatar");
+const path = require("path");
+const fs = require("fs");
 
 const { SECRET_KEY } = process.env;
 
 const emailRegexp = /[a-z0-9]+@[a-z]+\.[a-z]{2,3}/;
 
-
 const { validateSchema } = require("../../helpers");
 const User = require("../../models/userModel");
 const { createError } = require("../../helpers");
-const authorize = require('../../middleware/authorize');
+const authorize = require("../../middleware/authorize");
+const upload = require("../../middleware/upload");
 
 // JOI-schemas
 const registerSchema = Joi.object({
@@ -31,7 +34,6 @@ const logInSchema = Joi.object({
 const updateSubscriptionSchema = Joi.object({
   subscription: Joi.string().valid("starter", "pro", "business"),
 });
-
 
 // Routers
 router.post("/signup", async (req, res, next) => {
@@ -52,7 +54,6 @@ router.post("/signup", async (req, res, next) => {
       subscription,
     });
     res.status(201).json(result.email);
-
   } catch (error) {
     next(error);
   }
@@ -84,7 +85,6 @@ router.get("/logout", authorize, async (req, res, next) => {
     const { _id } = req.user;
     await User.findByIdAndUpdate(_id, { token: "" });
     res.json({ message: "logged out" });
-    
   } catch (error) {
     next(error);
   }
@@ -99,7 +99,7 @@ router.patch("/subscription", authorize, async (req, res, next) => {
   try {
     const { _id } = req.user;
     validateSchema(updateSubscriptionSchema, req.body);
-    const result = await User.findByIdAndUpdate(_id, req.body, { new: true, });
+    const result = await User.findByIdAndUpdate(_id, req.body, { new: true });
     res.json("subscription updated");
     if (!result) {
       throw createError(404, "User not found");
