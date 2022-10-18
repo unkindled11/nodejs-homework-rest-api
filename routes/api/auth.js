@@ -6,6 +6,7 @@ const Joi = require("joi");
 const gravatar = require("gravatar");
 const path = require("path");
 const fs = require("fs");
+const Jimp = require("jimp");
 
 const { SECRET_KEY } = process.env;
 
@@ -48,10 +49,12 @@ router.post("/signup", async (req, res, next) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
+    const avatarURL = gravatar.url(email);
     const result = await User.create({
       email,
       password: hash,
       subscription,
+      avatarURL,
     });
     res.status(201).json(result.email);
   } catch (error) {
@@ -109,5 +112,38 @@ router.patch("/subscription", authorize, async (req, res, next) => {
     next(error);
   }
 });
+
+const avatarDir = path.join(__dirname, "../../", "public", "avatars");
+
+router.patch(
+  "/avatar",
+  authorize,
+  upload.single("avatar"),
+  async (req, res, next) => {
+    try {
+      const { _id } = req.user;
+      const { path: tempDir, originalname } = req.file;
+
+      const [ext] = originalname.split(".").reverse();
+      const avatarName = `${_id}.${ext}`;
+      const avatarPath = path.join(avatarDir, avatarName);
+
+      await fs.rename(tempDir, avatarPath);
+      const avatarURL = path.join("/avatars", avatarName);
+
+      Jimp.read(avatarPath, (err, lenna) => {
+        if (err) throw err;
+        lenna.resize(250, 250).write(avatarPath);
+      });
+
+      await User.findByIdAndUpdate(_id, { avatarURL });
+
+      res.json({ avatarURL });
+    } catch (error) {
+      await fs.unlink(req.file.path);
+      next(error);
+    }
+  }
+);
 
 module.exports = router;
