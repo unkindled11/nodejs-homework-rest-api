@@ -1,18 +1,22 @@
 const { Router } = require("express");
 const router = Router();
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 const Joi = require("joi");
+const gravatar = require("gravatar");
+const path = require("path");
+const fs = require("fs");
+const Jimp = require("jimp");
 
 const { SECRET_KEY } = process.env;
 
 const emailRegexp = /[a-z0-9]+@[a-z]+\.[a-z]{2,3}/;
 
-
 const { validateSchema } = require("../../helpers");
 const User = require("../../models/userModel");
 const { createError } = require("../../helpers");
-const authorize = require('../../middleware/authorize');
+const authorize = require("../../middleware/authorize");
+const upload = require("../../middleware/upload");
 
 // JOI-schemas
 const registerSchema = Joi.object({
@@ -32,7 +36,6 @@ const updateSubscriptionSchema = Joi.object({
   subscription: Joi.string().valid("starter", "pro", "business"),
 });
 
-
 // Routers
 router.post("/signup", async (req, res, next) => {
   try {
@@ -46,13 +49,14 @@ router.post("/signup", async (req, res, next) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
+    const avatarURL = gravatar.url(email);
     const result = await User.create({
       email,
       password: hash,
       subscription,
+      avatarURL,
     });
     res.status(201).json(result.email);
-
   } catch (error) {
     next(error);
   }
@@ -84,7 +88,6 @@ router.get("/logout", authorize, async (req, res, next) => {
     const { _id } = req.user;
     await User.findByIdAndUpdate(_id, { token: "" });
     res.json({ message: "logged out" });
-    
   } catch (error) {
     next(error);
   }
@@ -99,7 +102,7 @@ router.patch("/subscription", authorize, async (req, res, next) => {
   try {
     const { _id } = req.user;
     validateSchema(updateSubscriptionSchema, req.body);
-    const result = await User.findByIdAndUpdate(_id, req.body, { new: true, });
+    const result = await User.findByIdAndUpdate(_id, req.body, { new: true });
     res.json("subscription updated");
     if (!result) {
       throw createError(404, "User not found");
@@ -109,5 +112,38 @@ router.patch("/subscription", authorize, async (req, res, next) => {
     next(error);
   }
 });
+
+const avatarDir = path.join(__dirname, "../../", "public", "avatars");
+
+router.patch(
+  "/avatar",
+  authorize,
+  upload.single("avatar"),
+  async (req, res, next) => {
+    try {
+      const { _id } = req.user;
+      const { path: tempDir, originalname } = req.file;
+
+      const [ext] = originalname.split(".").reverse();
+      const avatarName = `${_id}.${ext}`;
+      const avatarPath = path.join(avatarDir, avatarName);
+
+      await fs.rename(tempDir, avatarPath);
+      const avatarURL = path.join("/avatars", avatarName);
+
+      Jimp.read(avatarPath, (err, lenna) => {
+        if (err) throw err;
+        lenna.resize(250, 250).write(avatarPath);
+      });
+
+      await User.findByIdAndUpdate(_id, { avatarURL });
+
+      res.json({ avatarURL });
+    } catch (error) {
+      await fs.unlink(req.file.path);
+      next(error);
+    }
+  }
+);
 
 module.exports = router;
