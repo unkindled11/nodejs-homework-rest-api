@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const Joi = require("joi");
 const gravatar = require("gravatar");
+const bson = require("bson-objectid");
 const path = require("path");
 const fs = require("fs");
 const Jimp = require("jimp");
@@ -17,6 +18,7 @@ const User = require("../../models/userModel");
 const { createError } = require("../../helpers");
 const authorize = require("../../middleware/authorize");
 const upload = require("../../middleware/upload");
+const sendMail = require("../../helpers/sendMail");
 
 // JOI-schemas
 const registerSchema = Joi.object({
@@ -36,6 +38,10 @@ const updateSubscriptionSchema = Joi.object({
   subscription: Joi.string().valid("starter", "pro", "business"),
 });
 
+const verificationEmailSchema = Joi.object({
+  email: Joi.string().pattern(emailRegexp).required(),
+});
+
 // Routers
 router.post("/signup", async (req, res, next) => {
   try {
@@ -50,16 +56,68 @@ router.post("/signup", async (req, res, next) => {
 
     const hash = await bcrypt.hash(password, 10);
     const avatarURL = gravatar.url(email);
+    const verificationToken = bson();
     const result = await User.create({
       email,
       password: hash,
       subscription,
       avatarURL,
+      verificationToken,
     });
+
+    const mail = {
+      to: email,
+      subject: "Please verify your account",
+      html: `<a target="_blank" href="http://localhost:3000/api/users/verify/${verificationToken}">Click here to confirm your mail</a>`,
+    };
+
+    await sendMail(mail);
     res.status(201).json(result.email);
   } catch (error) {
     next(error);
   }
+});
+
+// Verif route
+
+router.get("verify/:verificationToken", async (req, res, next) => {
+  try {
+    const { verificationToken } = req.params;
+    const user = await User.findOne({ verificationToken });
+    if (!user) {
+      throw createError(404, "User not found");
+    }
+    await User.findByIdAndUpdate(user._id, {
+      verificationToken: "",
+      verify: true,
+    });
+    res.status(200).json({ message: "User verified" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// user resend verification email route
+
+router.post("/verify", async (req, res, next) => {
+  try {
+    validateSchema(verificationEmailSchema, req.body);
+    const { email } = req.body;
+    const user = User.findOne({ email });
+    if (!user) {
+      throw createError(404, "User not found");
+    }
+    if (user.verify) {
+      throw createError(400, "User already verified");
+    }
+    const verificationToken = user.verificationToken;
+    const mail = {
+      to: email,
+      subject: "Please verify your account",
+      html: `<a target="_blank" href="http://localhost:3000/api/users/verify/${verificationToken}">Click here to confirm your mail</a>`,
+    };
+    await sendMail(mail);
+  } catch (error) {}
 });
 
 router.post("/login", async (req, res, next) => {
@@ -70,6 +128,9 @@ router.post("/login", async (req, res, next) => {
     const passwordValid = bcrypt.compare(password, user.password);
     if (!passwordValid || !user) {
       throw createError(401, "Invalid email or password");
+    }
+    if (!user.verify) {
+      throw createError(401, "Email not verified");
     }
     const payload = {
       id: user._id,
